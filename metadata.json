@@ -1,0 +1,6 @@
+{
+  "name": "The Midnight - Premium Dine-In",
+  "description": "Luxury table-side QR ordering, digital menu, waiter service, and bill request for premium dining.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
