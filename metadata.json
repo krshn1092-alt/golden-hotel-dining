@@ -1,6 +1,6 @@
 {
-  "name": "The Midnight - Premium Dine-In",
-  "description": "Luxury table-side QR ordering, digital menu, waiter service, and bill request for premium dining.",
+  "name": "Golden Hotel & Banquet - Enterprise Suite",
+  "description": "All-in-one luxury hospitality suite featuring QR table ordering, room PMS check-in, banquet 3D virtual stage viewer, daily sales audit engine, and Zomato-style kitchen KDS.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
