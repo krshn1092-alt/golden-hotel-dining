@@ -159,36 +159,119 @@ export function Icon({ name, className = 'w-4 h-4', ...props }) {
     }
 
     // --- HTML5 WEB AUDIO API KITCHEN SOUND CHIME ---
+    let globalAudioCtx: any = null;
+    function getAudioContext() {
+      try {
+        if (!globalAudioCtx && typeof window !== "undefined") {
+          const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+          if (AudioCtx) {
+            globalAudioCtx = new AudioCtx();
+          }
+        }
+        if (globalAudioCtx && globalAudioCtx.state === "suspended") {
+          globalAudioCtx.resume();
+        }
+        return globalAudioCtx;
+      } catch {
+        return null;
+      }
+    }
+
+    // Auto-unlock Web Audio API context on any user tap or touch
+    if (typeof window !== "undefined") {
+      const unlockAudio = () => {
+        const ctx = getAudioContext();
+        if (ctx && ctx.state === "suspended") {
+          ctx.resume();
+        }
+      };
+      window.addEventListener("click", unlockAudio, { passive: true });
+      window.addEventListener("touchstart", unlockAudio, { passive: true });
+    }
+
+    // Loud 2-Tone Restaurant Notification Bell (D5: 587.33Hz -> A5: 880Hz)
     function playKdsChime() {
       try {
-        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-        if (!AudioCtx) return;
-        const ctx = new AudioCtx();
+        const ctx = getAudioContext();
+        if (!ctx) return;
+        if (ctx.state === "suspended") {
+          ctx.resume();
+        }
         const t = ctx.currentTime;
         
+        // Tone 1: High crisp strike (587.33 Hz - D5)
         const osc1 = ctx.createOscillator();
         const gain1 = ctx.createGain();
         osc1.type = "sine";
-        osc1.frequency.setValueAtTime(587.33, t); // D5
-        gain1.gain.setValueAtTime(0.3, t);
+        osc1.frequency.setValueAtTime(587.33, t);
+        gain1.gain.setValueAtTime(0.6, t);
         gain1.gain.exponentialRampToValueAtTime(0.001, t + 0.45);
         osc1.connect(gain1);
         gain1.connect(ctx.destination);
         osc1.start(t);
         osc1.stop(t + 0.45);
 
+        // Tone 2: Harmonious resonance bell (880 Hz - A5)
         const osc2 = ctx.createOscillator();
         const gain2 = ctx.createGain();
         osc2.type = "sine";
-        osc2.frequency.setValueAtTime(880, t + 0.15); // A5
-        gain2.gain.setValueAtTime(0.35, t + 0.15);
-        gain2.gain.exponentialRampToValueAtTime(0.001, t + 0.9);
+        osc2.frequency.setValueAtTime(880, t + 0.16);
+        gain2.gain.setValueAtTime(0.7, t + 0.16);
+        gain2.gain.exponentialRampToValueAtTime(0.001, t + 1.1);
         osc2.connect(gain2);
         gain2.connect(ctx.destination);
-        osc2.start(t + 0.15);
-        osc2.stop(t + 0.9);
+        osc2.start(t + 0.16);
+        osc2.stop(t + 1.1);
       } catch (e) {
         console.warn("KDS Chime sound blocked or unsupported:", e);
+      }
+    }
+
+    // --- ZERO-CONFIG CLIENT REALTIME CROSS-DEVICE MESSAGING ENGINE ---
+    const SYNC_TOPIC = "golden-hotel-orders-2026-sync";
+    const SYNC_ENDPOINT = `https://ntfy.sh/${SYNC_TOPIC}`;
+
+    function getOrCreateDeviceId(): string {
+      try {
+        const stored = safeStorage.getItem("gh_client_device_id_v2");
+        if (stored) return stored;
+        const generated = "phone_" + Math.random().toString(36).substring(2, 9) + "_" + Date.now().toString(36);
+        safeStorage.setItem("gh_client_device_id_v2", generated);
+        return generated;
+      } catch {
+        return "phone_" + Math.random().toString(36).substring(2, 8);
+      }
+    }
+
+    // Direct Cloud Broadcast to Cross-Device Channel
+    async function broadcastRealtimeSync(payload: any) {
+      try {
+        const fullPayload = {
+          ...payload,
+          topic: SYNC_TOPIC,
+          senderDeviceId: getOrCreateDeviceId(),
+          broadcastAt: Date.now()
+        };
+
+        // 1. Post to open cloud pub/sub channel
+        fetch(SYNC_ENDPOINT, {
+          method: "POST",
+          headers: {
+            "Title": `Golden Hotel: ${fullPayload.syncType || "Sync"} - ${fullPayload.orderId || fullPayload.regNo || ""}`,
+            "Priority": "urgent",
+            "Tags": "bell,knife_fork_plate"
+          },
+          body: JSON.stringify(fullPayload)
+        }).catch(err => {
+          console.warn("Cloud sync dispatch note:", err);
+        });
+
+        // 2. Dispatch local event for same-tab / local listener
+        try {
+          window.dispatchEvent(new CustomEvent("gh_cloud_realtime_local", { detail: fullPayload }));
+        } catch {}
+      } catch (err) {
+        console.error("broadcastRealtimeSync error:", err);
       }
     }
 
@@ -1272,13 +1355,17 @@ export function Icon({ name, className = 'w-4 h-4', ...props }) {
         } catch { return null; }
       });
 
+      // Realtime Cloud Sync & Live Order Alert States
+      const [liveOrderAlert, setLiveOrderAlert] = useState(null);
+      const [isSyncOnline, setIsSyncOnline] = useState(true);
+      const [lastSyncTime, setLastSyncTime] = useState("Connected");
+      const processedCloudSyncIdsRef = useRef(new Set());
+
       // UI Toast
       const [toast, setToast] = useState(null);
 
-      
-
       // LocalStorage Persistence
-            useEffect(() => {
+      useEffect(() => {
         const handleCustomAlert = (e) => {
           if (e && e.detail) {
             setAdminAlert(e.detail);
@@ -1287,6 +1374,188 @@ export function Icon({ name, className = 'w-4 h-4', ...props }) {
         };
         window.addEventListener("gh_alert_sync", handleCustomAlert);
         return () => window.removeEventListener("gh_alert_sync", handleCustomAlert);
+      }, []);
+
+      // Real-Time Cross-Device Cloud Sync Listener (Keyless & Zero-Config over ntfy.sh)
+      useEffect(() => {
+        const handleIncomingCloudPayload = (payload: any, messageId: string = "") => {
+          if (!payload || typeof payload !== "object") return;
+          const syncKey = `${payload.orderId || payload.regNo || ""}_${payload.syncType || ""}_${payload.createdAt || payload.broadcastAt || messageId || ""}`;
+          if (processedCloudSyncIdsRef.current.has(syncKey)) return;
+          processedCloudSyncIdsRef.current.add(syncKey);
+
+          const myDeviceId = getOrCreateDeviceId();
+          const isFromOtherDevice = payload.senderDeviceId !== myDeviceId;
+          setLastSyncTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+
+          // 1. In-App Real-Time Food Order Sync
+          if (payload.syncType === "NEW_ORDER" && payload.fullOrder) {
+            const newOrder = payload.fullOrder;
+            setOrders(prev => {
+              if (prev.some(o => o.id === newOrder.id)) return prev;
+              const next = [newOrder, ...prev];
+              try { safeStorage.setItem("gh_orders_v4", JSON.stringify(next)); } catch {}
+              return next;
+            });
+            setSessionOrders(prev => {
+              if (prev.some(o => o.id === newOrder.id)) return prev;
+              const next = [newOrder, ...prev];
+              try { safeStorage.setItem("gh_session_orders_v4", JSON.stringify(next)); } catch {}
+              return next;
+            });
+
+            if (isFromOtherDevice) {
+              playKdsChime();
+              setLiveOrderAlert({
+                id: newOrder.id,
+                type: "order",
+                table: newOrder.table,
+                total: newOrder.total,
+                time: newOrder.time || "Just now",
+                itemsCount: newOrder.items?.length || 0,
+                dishes: (newOrder.items || []).map(i => `${i.qty}x ${i.name}`).join(", ")
+              });
+              showToast("🔔 New Live Order Received!", `Ticket #${newOrder.id} from ${newOrder.table} (₹${formatPrice(newOrder.total, 0)})`);
+            }
+          }
+
+          // 2. In-App Real-Time Room Booking Sync
+          else if (payload.syncType === "NEW_RESERVATION" && payload.fullReservation) {
+            const res = payload.fullReservation;
+            setReservations(prev => {
+              if (prev.some(r => r.regNo === res.regNo)) return prev;
+              const next = [res, ...prev];
+              try { safeStorage.setItem("gh_reservations_v4", JSON.stringify(next)); } catch {}
+              return next;
+            });
+
+            if (isFromOtherDevice) {
+              playKdsChime();
+              setLiveOrderAlert({
+                id: res.regNo,
+                type: "room",
+                table: res.roomType,
+                name: res.guestName,
+                total: res.tariff,
+                time: res.createdAt || "Just now",
+                itemsCount: 1
+              });
+              showToast("🔔 New Live Reservation Received!", `Guest ${res.guestName} booked ${res.roomType} (${res.regNo})`);
+            }
+          }
+
+          // 3. In-App Real-Time Banquet Date Lock Inquiry Sync
+          else if (payload.syncType === "NEW_BANQUET_INQUIRY" && payload.fullInquiry) {
+            const inq = payload.fullInquiry;
+            setBanquetInquiries(prev => {
+              if (prev.some(b => b.regNo === inq.regNo)) return prev;
+              const next = [inq, ...prev];
+              try { safeStorage.setItem("gh_banquet_inquiries_v4", JSON.stringify(next)); } catch {}
+              return next;
+            });
+
+            if (isFromOtherDevice) {
+              playKdsChime();
+              setLiveOrderAlert({
+                id: inq.regNo,
+                type: "banquet",
+                table: inq.eventType || "Banquet Inquiry",
+                name: inq.name || inq.clientName,
+                total: inq.estimate || 0,
+                time: inq.eventDate || "Upcoming",
+                itemsCount: inq.guestCount || 0
+              });
+              showToast("🔔 New Banquet Inquiry Received!", `Inquiry from ${inq.name || inq.clientName} (${inq.eventType})`);
+            }
+          }
+        };
+
+        // Same-tab / local event listener
+        const handleLocalEvent = (e) => {
+          if (e && e.detail) {
+            handleIncomingCloudPayload(e.detail);
+          }
+        };
+        window.addEventListener("gh_cloud_realtime_local", handleLocalEvent);
+
+        // A. Catch-up query: Retrieve recent orders from cloud stream (past 12h)
+        const catchupRecentOrders = async () => {
+          try {
+            const res = await fetch(`${SYNC_ENDPOINT}/json?poll=1&since=12h`);
+            if (res.ok) {
+              setIsSyncOnline(true);
+              const text = await res.text();
+              const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
+              for (const line of lines) {
+                try {
+                  const raw = JSON.parse(line);
+                  if (raw.event === "message" && raw.message) {
+                    const parsed = typeof raw.message === "string" ? JSON.parse(raw.message) : raw.message;
+                    handleIncomingCloudPayload(parsed, raw.id);
+                  }
+                } catch {}
+              }
+            }
+          } catch (err) {
+            console.warn("Initial cloud sync catchup note:", err);
+          }
+        };
+        catchupRecentOrders();
+
+        // B. Real-time persistent SSE stream
+        let eventSource = null;
+        try {
+          eventSource = new EventSource(`${SYNC_ENDPOINT}/sse`);
+          eventSource.onopen = () => {
+            setIsSyncOnline(true);
+          };
+          eventSource.onmessage = (event) => {
+            try {
+              const raw = JSON.parse(event.data);
+              if (raw.event === "message" && raw.message) {
+                const parsed = typeof raw.message === "string" ? JSON.parse(raw.message) : raw.message;
+                handleIncomingCloudPayload(parsed, raw.id);
+              }
+            } catch (err) {
+              console.warn("Realtime stream item parse error:", err);
+            }
+          };
+          eventSource.onerror = () => {
+            // EventSource auto-reconnects
+            setIsSyncOnline(false);
+          };
+        } catch (err) {
+          console.warn("EventSource setup warning:", err);
+        }
+
+        // C. Fallback Poller (every 6 seconds for resilient background recovery)
+        const pollInterval = setInterval(async () => {
+          try {
+            const res = await fetch(`${SYNC_ENDPOINT}/json?poll=1&since=30s`);
+            if (res.ok) {
+              setIsSyncOnline(true);
+              const text = await res.text();
+              const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
+              for (const line of lines) {
+                try {
+                  const raw = JSON.parse(line);
+                  if (raw.event === "message" && raw.message) {
+                    const parsed = typeof raw.message === "string" ? JSON.parse(raw.message) : raw.message;
+                    handleIncomingCloudPayload(parsed, raw.id);
+                  }
+                } catch {}
+              }
+            }
+          } catch {
+            // Transient offline state
+          }
+        }, 6000);
+
+        return () => {
+          window.removeEventListener("gh_cloud_realtime_local", handleLocalEvent);
+          if (eventSource) eventSource.close();
+          clearInterval(pollInterval);
+        };
       }, []);
 
       useEffect(() => { safeStorage.setItem("gh_menu_items_v5", JSON.stringify(menuItems)); }, [menuItems]);
@@ -1605,7 +1874,7 @@ export function Icon({ name, className = 'w-4 h-4', ...props }) {
         };
       }, [orders, sessionOrders]);
 
-      const handleShareAuditWhatsApp = () => {
+      const handleCopyAuditSummary = () => {
         const brand = outletInfo.brandName || "Golden Hotel & Banquet";
         const timeStr = dailyAuditTimestamp || new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
         
@@ -1645,8 +1914,22 @@ ${topDishesText}
 ----------------------------------------
 _Automated settlement generated via Golden Hotel Enterprise ERP_`;
 
-        const waUrl = `https://wa.me/?text=${encodeURIComponent(text)}`;
-        window.open(waUrl, "_blank");
+        try {
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text);
+            showToast("Audit Copied to Clipboard", "Daily sales summary is ready to paste anywhere.");
+          } else {
+            const textarea = document.createElement("textarea");
+            textarea.value = text;
+            document.body.appendChild(textarea);
+            textarea.select();
+            document.execCommand("copy");
+            document.body.removeChild(textarea);
+            showToast("Audit Copied to Clipboard", "Daily sales summary copied successfully.");
+          }
+        } catch (e) {
+          showToast("Audit Ready", "Daily sales report is visible in this modal for printing or records.");
+        }
       };
 
       // Filtered Menu
@@ -1816,6 +2099,18 @@ _Automated settlement generated via Golden Hotel Enterprise ERP_`;
         } catch (e) {
           console.error("Direct storage write error:", e);
         }
+
+        // Direct In-App Cloud Realtime Broadcast (Customer Phone A -> Owner Phone B)
+        broadcastRealtimeSync({
+          syncType: "NEW_ORDER",
+          orderId: newOrder.id,
+          table: newOrder.table,
+          items: newOrder.items,
+          total: newOrder.total,
+          paymentStatus: newOrder.paymentMethod,
+          timestamp: newOrder.time,
+          fullOrder: newOrder
+        });
 
         // Sound chime for KDS
         if (storeOps.soundEnabled) playKdsChime();
@@ -2153,6 +2448,22 @@ _Automated settlement generated via Golden Hotel Enterprise ERP_`;
           window.dispatchEvent(new CustomEvent("gh_alert_sync", { detail: alertInfo }));
         } catch {}
 
+        // Direct In-App Cloud Realtime Broadcast for Room Reservation
+        broadcastRealtimeSync({
+          syncType: "NEW_RESERVATION",
+          orderId: confirmedBooking.regNo,
+          regNo: confirmedBooking.regNo,
+          guestName: confirmedBooking.guestName,
+          mobile: confirmedBooking.mobile,
+          roomType: confirmedBooking.roomType,
+          stayDurationHours: confirmedBooking.stayDurationHours,
+          tariff: confirmedBooking.tariff,
+          paymentStatus: confirmedBooking.paymentStatus,
+          paymentMethod: confirmedBooking.paymentMethod,
+          timestamp: alertInfo.time,
+          fullReservation: confirmedBooking
+        });
+
         setActiveKeyPass({
           ...confirmedBooking,
           roomNo: "Assigned at Reception"
@@ -2273,6 +2584,20 @@ _Automated settlement generated via Golden Hotel Enterprise ERP_`;
         try {
           window.dispatchEvent(new CustomEvent("gh_alert_sync", { detail: alertInfo }));
         } catch {}
+
+        // Direct In-App Cloud Realtime Broadcast for Banquet Inquiry
+        broadcastRealtimeSync({
+          syncType: "NEW_BANQUET_INQUIRY",
+          orderId: regNo,
+          regNo,
+          guestName: enrichedInq.name,
+          mobile: enrichedInq.phone,
+          eventType: enrichedInq.eventType,
+          eventDate: enrichedInq.eventDate,
+          guestsCount: enrichedInq.guestCount,
+          timestamp: alertInfo.time,
+          fullInquiry: enrichedInq
+        });
 
         setIsBanquetModalOpen(false);
         showToast("Date Locked & Registration Synced", `Ref ${regNo} logged! Event forwarded to Banquet Director.`);
@@ -4156,7 +4481,159 @@ _Automated settlement generated via Golden Hotel Enterprise ERP_`;
 
           {/* ================= 4. MANAGER ERP & KITCHEN KDS (SECRET PIN PROTECTED) ================= */}
           {activeView === "manager" && (
-            <main className="max-w-7xl mx-auto w-full px-3 sm:px-6 pt-4 flex-1 space-y-8">
+            <main className="max-w-7xl mx-auto w-full px-3 sm:px-6 pt-4 flex-1 space-y-6">
+
+              {/* Flashing Visual Badge: New Live Order Received! */}
+              {liveOrderAlert && (
+                <div className="p-4 rounded-2xl bg-gradient-to-r from-emerald-950/90 via-obsidian-900 to-emerald-950/90 border-2 border-emerald-400 shadow-2xl shadow-emerald-500/25 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 animate-pulse">
+                  <div className="flex items-center gap-3.5">
+                    <div className="w-11 h-11 rounded-xl bg-emerald-500 text-black flex items-center justify-center font-black text-xl shadow-lg shrink-0">
+                      🔔
+                    </div>
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-sm font-black text-white">
+                          🔔 New Live Order Received!
+                        </span>
+                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-500 text-black shadow-sm">
+                          Ticket #{liveOrderAlert.id}
+                        </span>
+                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-gold-500/20 text-gold-300 border border-gold-500/30">
+                          {liveOrderAlert.table}
+                        </span>
+                      </div>
+                      <p className="text-xs text-gray-200 mt-0.5">
+                        {liveOrderAlert.dishes ? (
+                          <span>Dishes: <strong className="text-white">{liveOrderAlert.dishes}</strong> • </span>
+                        ) : null}
+                        Total: <strong className="text-emerald-400">₹{formatPrice(liveOrderAlert.total || 0, 0)}</strong> • Logged: <span className="text-gray-400">{liveOrderAlert.time}</span>
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (liveOrderAlert.type === "order") {
+                          setAdminNavTab("kitchen");
+                        } else {
+                          setAdminNavTab("frontdesk");
+                          setAdminSearchQuery(liveOrderAlert.id);
+                        }
+                        setLiveOrderAlert(null);
+                      }}
+                      className="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-400 hover:from-emerald-400 hover:to-teal-300 text-black font-extrabold text-xs shadow-lg transition-all cursor-pointer flex items-center gap-1.5"
+                    >
+                      <span>{liveOrderAlert.type === "order" ? "View in Kitchen Queue" : "View Reservation"}</span>
+                      <Icon name="arrow-right" className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setLiveOrderAlert(null)}
+                      className="p-2 rounded-xl text-gray-400 hover:text-white bg-obsidian-800 border border-gray-700 hover:bg-obsidian-750 transition-all cursor-pointer"
+                      title="Dismiss Badge"
+                    >
+                      <Icon name="x" className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Cloud Realtime Cross-Device Sync Status Bar */}
+              <div className="px-4 py-3 rounded-2xl bg-obsidian-900/90 border border-gold-500/30 backdrop-blur-md flex flex-col md:flex-row md:items-center md:justify-between gap-3 text-xs shadow-xl">
+                <div className="flex items-center gap-3">
+                  <span className="relative flex h-3.5 w-3.5 shrink-0">
+                    {isSyncOnline ? (
+                      <>
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-emerald-500"></span>
+                      </>
+                    ) : (
+                      <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-amber-500"></span>
+                    )}
+                  </span>
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-extrabold text-white">Direct In-App Cloud Realtime Sync:</span>
+                      <span className="font-mono text-[11px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+                        Active &amp; Listening
+                      </span>
+                      <span className="hidden sm:inline-block text-[10px] text-gray-500 font-mono">
+                        (Topic: {SYNC_TOPIC})
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-gray-400 mt-0.5">
+                      Customer Phone A orders appear here on Phone B in real time without WhatsApp or page reload.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      playKdsChime();
+                      showToast("🔊 Test Bell Played", "Audible 2-tone restaurant notification bell chime is working!");
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-obsidian-800 hover:bg-obsidian-750 text-gold-300 hover:text-gold-200 border border-gold-500/30 text-[11px] font-bold flex items-center gap-1.5 transition-all cursor-pointer"
+                    title="Click to test audible restaurant notification chime on this device"
+                  >
+                    <Icon name="bell" className="w-3.5 h-3.5 text-gold-400" />
+                    <span>Test Bell Chime</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const testId = `GH-${Math.floor(1000 + Math.random() * 9000)}`;
+                      const sampleOrder = {
+                        id: testId,
+                        table: "Table 2 (Royal Dining)",
+                        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                        createdAt: Date.now(),
+                        items: [
+                          { id: 1, name: "Paneer Tikka Angara", qty: 2, price: 340, cartKey: "p1" },
+                          { id: 4, name: "Dal Makhani Dum Pukht", qty: 1, price: 310, cartKey: "d1" }
+                        ],
+                        subtotal: 990,
+                        discount: 0,
+                        gst: 49.5,
+                        serviceCharge: 49.5,
+                        tip: 0,
+                        total: 1089,
+                        paymentMethod: "UPI ONLINE",
+                        status: "pending",
+                        generalNote: "Mild spice preferred"
+                      };
+                      broadcastRealtimeSync({
+                        syncType: "NEW_ORDER",
+                        orderId: sampleOrder.id,
+                        table: sampleOrder.table,
+                        items: sampleOrder.items,
+                        total: sampleOrder.total,
+                        paymentStatus: sampleOrder.paymentMethod,
+                        timestamp: sampleOrder.time,
+                        fullOrder: sampleOrder
+                      });
+                      playKdsChime();
+                      setLiveOrderAlert({
+                        id: sampleOrder.id,
+                        type: "order",
+                        table: sampleOrder.table,
+                        total: sampleOrder.total,
+                        time: sampleOrder.time,
+                        itemsCount: sampleOrder.items.length,
+                        dishes: sampleOrder.items.map(i => `${i.qty}x ${i.name}`).join(", ")
+                      });
+                      showToast("🔔 Live Order Test Broadcasted", `Simulated Ticket #${testId}`);
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-gold-500/20 hover:bg-gold-500/30 text-gold-300 border border-gold-500/40 text-[11px] font-bold flex items-center gap-1.5 transition-all cursor-pointer"
+                    title="Simulate incoming order"
+                  >
+                    <span>Simulate Incoming Order</span>
+                  </button>
+                </div>
+              </div>
               
               {/* Real-Time New Booking Notification Alert Banner (Prompt Requirement) */}
               {adminAlert && (
@@ -7955,10 +8432,10 @@ _Automated settlement generated via Golden Hotel Enterprise ERP_`;
                     </button>
 
                     <button
-                      onClick={handleShareAuditWhatsApp}
-                      className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-2 shadow-md shadow-emerald-600/20 transition-all"
+                      onClick={handleCopyAuditSummary}
+                      className="px-4 py-2.5 rounded-xl bg-obsidian-800 hover:bg-obsidian-750 text-gold-400 border border-gold-500/40 font-bold text-xs flex items-center gap-2 shadow-md transition-all cursor-pointer"
                     >
-                      <Icon name="message-circle" className="w-3.5 h-3.5" /><span>Share Summary via WhatsApp</span>
+                      <Icon name="copy" className="w-3.5 h-3.5" /><span>Copy Shift Summary Text</span>
                     </button>
                   </div>
 
